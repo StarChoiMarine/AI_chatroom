@@ -154,8 +154,12 @@ function setParticipantStatus(service, status) {
 
 function applyHealth(health) {
   (health || []).forEach((item) => {
-    if (!item.connected) setParticipantStatus(item.service, "DISCONNECTED");
-    else setParticipantStatus(item.service, item.loggedIn ? "READY" : "LOGIN_REQUIRED");
+    if (!item.connected) {
+      setParticipantStatus(item.service, "DISCONNECTED");
+      if (item.detail) addProgress(`${SERVICE_LABELS[item.service]} 연결 실패: ${item.detail}`);
+    } else {
+      setParticipantStatus(item.service, item.loggedIn ? "READY" : "LOGIN_REQUIRED");
+    }
   });
 }
 

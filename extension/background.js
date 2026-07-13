@@ -317,12 +317,26 @@ async function waitForTab(tabId) {
 }
 
 async function injectContentScript(tabId, service) {
+  const tab = await chrome.tabs.get(tabId);
+  const url = tab.url || "";
+  if (!url.startsWith("https://")) {
+    throw new Error(`${SERVICE_LABELS[service]} 탭 URL에 접근할 수 없습니다: ${url || "unknown"}`);
+  }
   try {
     await chrome.tabs.sendMessage(tabId, { type: "PING", targetService: service });
     return;
   } catch {
     await chrome.scripting.executeScript({ target: { tabId }, files: ["content-script.js"] });
   }
+  for (let i = 0; i < 10; i += 1) {
+    try {
+      await chrome.tabs.sendMessage(tabId, { type: "PING", targetService: service });
+      return;
+    } catch {
+      await sleep(250);
+    }
+  }
+  throw new Error(`${SERVICE_LABELS[service]} 탭에 확장 스크립트를 연결하지 못했습니다. 해당 탭을 새로고침하세요. url=${url}`);
 }
 
 async function sendToService(service, message) {

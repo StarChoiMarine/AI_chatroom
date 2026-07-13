@@ -1,6 +1,7 @@
 (() => {
-  if (window.__AI_ROUNDTABLE_CONTENT__) return;
-  window.__AI_ROUNDTABLE_CONTENT__ = true;
+  const CONTENT_VERSION = "2026-07-14-gemini-reconnect";
+  if (window.__AI_ROUNDTABLE_CONTENT__ === CONTENT_VERSION) return;
+  window.__AI_ROUNDTABLE_CONTENT__ = CONTENT_VERSION;
 
   const SERVICE_BY_HOST = {
     "chatgpt.com": "CHATGPT",
