@@ -376,6 +376,40 @@ async function sendToService(service, message) {
   return chrome.tabs.sendMessage(tabId, { ...message, targetService: service });
 }
 
+async function sendAndWaitForService(service, payload) {
+  let started;
+  try {
+    started = await sendToService(service, { type: "START_SEND_JOB", ...payload });
+  } catch (error) {
+    const raw = error.message || String(error);
+    if (/message channel closed|Receiving end does not exist|Extension context invalidated|asynchronous response/i.test(raw)) {
+      throw new Error(`MESSAGE_CHANNEL_CLOSED:${raw}`);
+    }
+    throw error;
+  }
+  if (!started?.ok || !started.jobId) throw new Error(started?.error || "작업 시작 실패");
+
+  const deadline = Date.now() + Number(payload.timeoutMs || DEFAULT_SETTINGS.responseTimeoutMs) + 10000;
+  while (Date.now() < deadline) {
+    if (abortRequested) throw new Error("ABORTED");
+    await sleep(1000);
+    let job;
+    try {
+      job = await sendToService(service, { type: "GET_SEND_JOB", jobId: started.jobId });
+    } catch (error) {
+      const raw = error.message || String(error);
+      if (/message channel closed|Receiving end does not exist|Extension context invalidated|asynchronous response/i.test(raw)) {
+        throw new Error(`MESSAGE_CHANNEL_CLOSED:${raw}`);
+      }
+      throw error;
+    }
+    if (!job?.ok) throw new Error(job?.error || "작업 상태 조회 실패");
+    if (job.status === "DONE") return { ok: true, text: job.text };
+    if (job.status === "ERROR") throw new Error(job.error || "응답 수집 실패");
+  }
+  throw new Error("RESPONSE_TIMEOUT");
+}
+
 async function openServiceForLogin(service) {
   return ensureTab(service, { active: true });
 }
@@ -463,8 +497,7 @@ async function runService(room, service, round) {
     const prompt = buildPrompt(service, room);
     markReadBy(room, service);
     await saveRoom(room);
-    const responsePromise = sendToService(service, {
-      type: "SEND_AND_WAIT",
+    const responsePromise = sendAndWaitForService(service, {
       prompt,
       timeoutMs: room.settings.responseTimeoutMs,
       stabilizeMs: room.settings.stabilizeMs,
@@ -507,6 +540,7 @@ function classifyError(service, error) {
       detail: `${SERVICE_LABELS[service]}가 입력 길이/토큰 한도 때문에 답변하지 못했습니다. 설정에서 최대 컨텍스트 메시지 수 또는 글자 수를 줄인 뒤 다시 시도하세요.`,
     };
   }
+  if (raw.includes("MESSAGE_CHANNEL_CLOSED") || /message channel closed|asynchronous response/i.test(raw)) return { status: "ERROR", detail: `${SERVICE_LABELS[service]} 탭의 확장 메시지 채널이 중간에 닫혔습니다. 해당 서비스 탭을 새로고침한 뒤 다시 시도하세요.` };
   if (raw.includes("INPUT_NOT_FOUND")) return { status: "ERROR", detail: `${SERVICE_LABELS[service]} 입력창을 찾지 못했습니다. 서비스 화면을 새로고침하거나 선택자를 업데이트하세요.` };
   if (raw.includes("RESPONSE_NOT_STARTED")) return { status: "ERROR", detail: `${SERVICE_LABELS[service]}가 답변을 시작하지 못했습니다. 브라우저 탭에 사용량/토큰/메시지 한도 안내가 있는지 확인하세요.` };
   if (raw.includes("RESPONSE_TIMEOUT")) return { status: "ERROR", detail: `${SERVICE_LABELS[service]}의 답변 시간이 초과되었습니다.` };

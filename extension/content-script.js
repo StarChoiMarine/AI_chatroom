@@ -1,5 +1,5 @@
 (() => {
-  const CONTENT_VERSION = "2026-07-14-gemini-response-scope";
+  const CONTENT_VERSION = "2026-07-14-async-send-jobs";
   if (window.__AI_ROUNDTABLE_CONTENT__ === CONTENT_VERSION) return;
   window.__AI_ROUNDTABLE_CONTENT__ = CONTENT_VERSION;
 
@@ -177,6 +177,7 @@
   if (!service) return;
 
   let abortRequested = false;
+  const jobs = new Map();
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const ERROR_PATTERNS = [
     /message is too long/i,
@@ -510,6 +511,37 @@
     return text;
   }
 
+  function startSendJob(message) {
+    const jobId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const job = { id: jobId, status: "RUNNING", text: "", error: "", startedAt: Date.now() };
+    jobs.set(jobId, job);
+    sendAndWait(message)
+      .then((text) => {
+        job.status = "DONE";
+        job.text = text;
+        job.completedAt = Date.now();
+      })
+      .catch((error) => {
+        job.status = "ERROR";
+        job.error = error.message || String(error);
+        job.completedAt = Date.now();
+      });
+    return jobId;
+  }
+
+  function getSendJob(jobId) {
+    const job = jobs.get(jobId);
+    if (!job) return { ok: false, error: "JOB_NOT_FOUND", service };
+    return {
+      ok: true,
+      service,
+      jobId,
+      status: job.status,
+      text: job.text,
+      error: job.error,
+    };
+  }
+
   async function startNewConversation() {
     const button = await findFirst(SELECTORS[service].newChat, 1200);
     if (button) {
@@ -534,8 +566,11 @@
         if (message.type === "PING") sendResponse({ ok: true, service });
         else if (message.type === "CHECK_LOGIN") sendResponse({ ok: true, loggedIn: await checkLogin(), service, url: location.href });
         else if (message.type === "SEND_AND_WAIT") sendResponse({ ok: true, text: await sendAndWait(message) });
+        else if (message.type === "START_SEND_JOB") sendResponse({ ok: true, jobId: startSendJob(message), service });
+        else if (message.type === "GET_SEND_JOB") sendResponse(getSendJob(message.jobId));
         else if (message.type === "START_NEW") sendResponse({ ok: true, started: await startNewConversation() });
         else if (message.type === "STOP") sendResponse({ ok: true, stopped: await stopGeneration() });
+        else sendResponse({ ok: false, error: `UNKNOWN_MESSAGE:${message.type}`, service });
       } catch (error) {
         sendResponse({ ok: false, error: error.message || String(error), service });
       }
