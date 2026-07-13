@@ -247,8 +247,7 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 function updateSendState() {
-  const allow = state.settings?.allowSendWhileGenerating;
-  $("#btnSend").disabled = state.busy && !allow;
+  $("#btnSend").disabled = false;
   $("#btnAbort").disabled = !state.busy;
 }
 
@@ -256,9 +255,8 @@ async function sendMessage() {
   const input = $("#input");
   const text = input.value.trim();
   if (!text) return;
-  if (state.busy && !state.settings?.allowSendWhileGenerating) return;
   input.value = "";
-  state.busy = true;
+  if (!state.busy) state.busy = true;
   updateSendState();
   const response = await command("SEND_MESSAGE", { text });
   if (!response?.ok) {

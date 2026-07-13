@@ -430,21 +430,18 @@ async function health() {
 
 async function handleUserMessage(text) {
   const room = await getRoom();
-  if (busy && !room.settings.allowSendWhileGenerating) throw new Error("이미 답변을 처리 중입니다.");
+  if (busy) {
+    const userMsg = appendUserMessage(room, text);
+    emit({ type: "MESSAGE_ADDED", message: userMsg });
+    progress("새 메시지를 받았습니다. 현재 답변이 끝나면 이어서 전달합니다.");
+    await saveRoom(room);
+    return;
+  }
   busy = true;
   abortRequested = false;
   try {
-    const round = Math.max(0, ...room.messages.map((m) => m.round || 0)) + 1;
-    const userMsg = {
-      id: id(),
-      roomId: room.id,
-      speaker: "USER",
-      content: text,
-      createdAt: now(),
-      round,
-      status: "COMPLETED",
-    };
-    room.messages.push(userMsg);
+    const userMsg = appendUserMessage(room, text);
+    const round = userMsg.round;
     emit({ type: "MESSAGE_ADDED", message: userMsg });
     await saveRoom(room);
 
@@ -454,8 +451,14 @@ async function handleUserMessage(text) {
     let responseCount = 0;
     let exhausted = false;
 
-    while (queue.length && responseCount < maxCascadeResponses) {
+    while (responseCount < maxCascadeResponses) {
       if (abortRequested) break;
+      if (!queue.length) {
+        for (const next of enabled) {
+          if (hasUnreadFor(room, next) && !queue.includes(next)) queue.push(next);
+        }
+      }
+      if (!queue.length) break;
       const service = queue.shift();
       if (!room.settings.services[service]?.enabled || !hasUnreadFor(room, service)) continue;
       const completed = await runService(room, service, round);
@@ -477,6 +480,21 @@ async function handleUserMessage(text) {
   }
 }
 
+function appendUserMessage(room, text) {
+  const round = Math.max(0, ...room.messages.map((m) => m.round || 0)) + 1;
+  const userMsg = {
+    id: id(),
+    roomId: room.id,
+    speaker: "USER",
+    content: text,
+    createdAt: now(),
+    round,
+    status: "COMPLETED",
+  };
+  room.messages.push(userMsg);
+  return userMsg;
+}
+
 async function runService(room, service, round) {
   const aiMsg = {
     id: id(),
@@ -496,6 +514,7 @@ async function runService(room, service, round) {
     progress(`${SERVICE_LABELS[service]}에 ${isInitialDelivery ? "초기 맥락" : "새로 추가된 대화"}를 전달하고 있습니다.`);
     const prompt = buildPrompt(service, room);
     markReadBy(room, service);
+    const deliveryCursorAfterPrompt = room.messages.length;
     await saveRoom(room);
     const responsePromise = sendAndWaitForService(service, {
       prompt,
@@ -512,7 +531,7 @@ async function runService(room, service, round) {
     aiMsg.content = response.text;
     aiMsg.status = "COMPLETED";
     room.deliveryCursors ||= Object.fromEntries(SERVICES.map((name) => [name, 0]));
-    room.deliveryCursors[service] = room.messages.length;
+    room.deliveryCursors[service] = deliveryCursorAfterPrompt;
     emit({ type: "SERVICE_STATUS_CHANGED", service, status: "DONE" });
     emit({ type: "RESPONSE_COMPLETED", service, message: aiMsg });
     progress(`${SERVICE_LABELS[service]} 답변을 수집했습니다. (${response.text.length}자)`);
