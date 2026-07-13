@@ -430,6 +430,7 @@ function classifyError(service, error) {
     };
   }
   if (raw.includes("INPUT_NOT_FOUND")) return { status: "ERROR", detail: `${SERVICE_LABELS[service]} 입력창을 찾지 못했습니다. 서비스 화면을 새로고침하거나 선택자를 업데이트하세요.` };
+  if (raw.includes("RESPONSE_NOT_STARTED")) return { status: "ERROR", detail: `${SERVICE_LABELS[service]}가 답변을 시작하지 못했습니다. 브라우저 탭에 사용량/토큰/메시지 한도 안내가 있는지 확인하세요.` };
   if (raw.includes("RESPONSE_TIMEOUT")) return { status: "ERROR", detail: `${SERVICE_LABELS[service]}의 답변 시간이 초과되었습니다.` };
   return { status: "ERROR", detail: raw };
 }

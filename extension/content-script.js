@@ -138,10 +138,27 @@
     /prompt is too long/i,
     /conversation is too long/i,
     /context window/i,
+    /token limit/i,
     /maximum length/i,
     /too many tokens/i,
+    /out of tokens/i,
+    /no tokens/i,
+    /insufficient tokens/i,
+    /usage limit/i,
+    /message limit/i,
+    /limit reached/i,
+    /rate limit/i,
+    /quota/i,
+    /credits?/i,
+    /remaining messages?/i,
+    /try again (later|after|tomorrow)/i,
     /exceeds? (the )?(maximum|limit)/i,
-    /토큰.*(초과|한도)/i,
+    /토큰.*(초과|한도|없|부족)/i,
+    /(남은|잔여).*(메시지|토큰).*(없|부족)/i,
+    /(사용량|메시지|토큰).*(한도|제한)/i,
+    /(한도|제한).*(도달|초과)/i,
+    /크레딧.*(없|부족|초과)/i,
+    /나중에 다시/i,
     /(너무|너무나) (깁니다|길어요)/i,
     /메시지가 너무 깁니다/i,
     /한도를 초과/i,
@@ -218,7 +235,7 @@
         if (text) texts.push(text);
       }
     }
-    const bodyText = (document.body.innerText || "").slice(-12000);
+    const bodyText = document.body.innerText || "";
     texts.push(bodyText);
     return texts.find((text) => ERROR_PATTERNS.some((pattern) => pattern.test(text))) || "";
   }
@@ -298,12 +315,20 @@
   }
 
   async function waitForStableText({ baselineCount, timeoutMs, stabilizeMs }) {
-    const startDeadline = Date.now() + 30000;
+    const startDeadline = Date.now() + Math.min(15000, timeoutMs);
+    let started = false;
     while (Date.now() < startDeadline) {
       throwIfAborted();
       throwIfPageError();
-      if (countAssistantMessages() > baselineCount || await isGenerating()) break;
+      if (countAssistantMessages() > baselineCount || await isGenerating()) {
+        started = true;
+        break;
+      }
       await sleep(400);
+    }
+    if (!started) {
+      throwIfPageError();
+      throw new Error("RESPONSE_NOT_STARTED");
     }
 
     const deadline = Date.now() + timeoutMs;

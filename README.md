@@ -22,7 +22,7 @@
 6. ChatGPT / Claude / Gemini 탭이 열리면 평소처럼 직접 로그인
 7. 확장프로그램 화면에서 **로그인 상태 확인** 클릭 후 대화 시작
 
-코드를 수정한 뒤에는 `chrome://extensions`에서 **AI Roundtable의 새로고침 버튼**을 눌러 확장프로그램을 다시 로드하세요.
+코드를 수정한 뒤에는 자동으로 즉시 반영되지 않습니다. `chrome://extensions`에서 **AI Roundtable의 새로고침 버튼**을 누르고, 이미 열려 있던 AI Roundtable/ChatGPT/Claude/Gemini 탭도 새로고침하세요.
 
 확장프로그램 버전의 특징:
 
