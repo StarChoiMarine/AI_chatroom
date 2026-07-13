@@ -131,7 +131,21 @@
   const service = SERVICE_BY_HOST[location.hostname];
   if (!service) return;
 
+  let abortRequested = false;
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const ERROR_PATTERNS = [
+    /message is too long/i,
+    /prompt is too long/i,
+    /conversation is too long/i,
+    /context window/i,
+    /maximum length/i,
+    /too many tokens/i,
+    /exceeds? (the )?(maximum|limit)/i,
+    /토큰.*(초과|한도)/i,
+    /(너무|너무나) (깁니다|길어요)/i,
+    /메시지가 너무 깁니다/i,
+    /한도를 초과/i,
+  ];
 
   function isVisible(el) {
     if (!el || !(el instanceof Element)) return false;
@@ -181,6 +195,41 @@
     return anyVisible(selectors.loggedInIndicators, 1200);
   }
 
+  function throwIfAborted() {
+    if (abortRequested) throw new Error("ABORTED");
+  }
+
+  function readVisibleErrorText() {
+    const candidates = [
+      '[role="alert"]',
+      '[data-testid*="error"]',
+      '.error',
+      '.text-danger',
+      '.text-red-500',
+      '.text-red-600',
+      'div[class*="error"]',
+      'div[class*="danger"]',
+      'div[class*="warning"]',
+    ];
+    const texts = [];
+    for (const selector of candidates) {
+      for (const el of query(selector)) {
+        const text = (el.innerText || el.textContent || "").trim();
+        if (text) texts.push(text);
+      }
+    }
+    const bodyText = (document.body.innerText || "").slice(-12000);
+    texts.push(bodyText);
+    return texts.find((text) => ERROR_PATTERNS.some((pattern) => pattern.test(text))) || "";
+  }
+
+  function throwIfPageError() {
+    const text = readVisibleErrorText();
+    if (!text) return;
+    const compact = text.replace(/\s+/g, " ").trim().slice(0, 400);
+    throw new Error(`PROMPT_TOO_LONG:${compact}`);
+  }
+
   function setNativeValue(el, value) {
     const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
@@ -190,6 +239,7 @@
   }
 
   async function typeMessage(input, message) {
+    throwIfAborted();
     input.focus();
     input.click();
     if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
@@ -204,13 +254,20 @@
   async function submit(input) {
     const selectors = SELECTORS[service];
     const deadline = Date.now() + 5000;
+    let sawDisabledSendButton = false;
     while (Date.now() < deadline) {
+      throwIfAborted();
+      throwIfPageError();
       const button = await findFirst(selectors.sendButton, 300);
       if (button && !button.disabled && button.getAttribute("aria-disabled") !== "true") {
         button.click();
         return;
       }
+      if (button) sawDisabledSendButton = true;
       await sleep(150);
+    }
+    if (sawDisabledSendButton) {
+      throw new Error("PROMPT_TOO_LONG:send button stayed disabled");
     }
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
   }
@@ -243,6 +300,8 @@
   async function waitForStableText({ baselineCount, timeoutMs, stabilizeMs }) {
     const startDeadline = Date.now() + 30000;
     while (Date.now() < startDeadline) {
+      throwIfAborted();
+      throwIfPageError();
       if (countAssistantMessages() > baselineCount || await isGenerating()) break;
       await sleep(400);
     }
@@ -251,6 +310,8 @@
     let lastText = "";
     let stableSince = Date.now();
     while (Date.now() < deadline) {
+      throwIfAborted();
+      throwIfPageError();
       const text = readLatestAssistantText();
       const generating = await isGenerating();
       if (text !== lastText) {
@@ -266,6 +327,7 @@
   }
 
   async function sendAndWait({ prompt, timeoutMs, stabilizeMs }) {
+    abortRequested = false;
     if (!(await checkLogin())) {
       throw new Error("LOGIN_REQUIRED");
     }
@@ -274,7 +336,9 @@
     const input = await findFirst(selectors.input, 2500);
     if (!input) throw new Error("INPUT_NOT_FOUND");
     await typeMessage(input, prompt);
+    throwIfPageError();
     await submit(input);
+    throwIfPageError();
     const text = await waitForStableText({ baselineCount, timeoutMs, stabilizeMs });
     if (!text) throw new Error("RESPONSE_TIMEOUT");
     return text;
@@ -292,6 +356,7 @@
   }
 
   async function stopGeneration() {
+    abortRequested = true;
     const button = await findFirst(SELECTORS[service].stopButton, 500);
     if (button) button.click();
   }

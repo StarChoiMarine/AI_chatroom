@@ -200,13 +200,15 @@ function resolveTargets(text, settings) {
   return order;
 }
 
-async function ensureTab(service) {
+async function ensureTab(service, opts = {}) {
   const settings = (await getRoom()).settings;
   const url = settings.services[service]?.url || SERVICE_URLS[service];
   const existing = await chrome.tabs.query({ url: SERVICE_URL_PATTERNS[service] });
   let tab = existing.find((item) => item.id && !item.discarded);
-  if (!tab) tab = await chrome.tabs.create({ url, active: false });
+  if (!tab) tab = await chrome.tabs.create({ url, active: Boolean(opts.active) });
+  else if (opts.active) await chrome.tabs.update(tab.id, { active: true, url: tab.url || url });
   if (!tab.id) throw new Error(`${SERVICE_LABELS[service]} 탭을 열 수 없습니다.`);
+  if (opts.active && tab.windowId) await chrome.windows.update(tab.windowId, { focused: true });
   await waitForTab(tab.id);
   await injectContentScript(tab.id, service);
   return tab.id;
@@ -232,6 +234,10 @@ async function injectContentScript(tabId, service) {
 async function sendToService(service, message) {
   const tabId = await ensureTab(service);
   return chrome.tabs.sendMessage(tabId, { ...message, targetService: service });
+}
+
+async function openServiceForLogin(service) {
+  return ensureTab(service, { active: true });
 }
 
 async function health() {
@@ -304,6 +310,7 @@ async function runService(room, service, round) {
       timeoutMs: room.settings.responseTimeoutMs,
       stabilizeMs: room.settings.stabilizeMs,
     });
+    if (abortRequested) throw new Error("ABORTED");
     if (!response?.ok) throw new Error(response?.error || "응답 수집 실패");
     aiMsg.content = response.text;
     aiMsg.status = "COMPLETED";
@@ -325,6 +332,13 @@ async function runService(room, service, round) {
 function classifyError(service, error) {
   const raw = error.message || String(error);
   if (raw.includes("LOGIN_REQUIRED")) return { status: "LOGIN_REQUIRED", detail: `${SERVICE_LABELS[service]} 로그인이 필요합니다. 같은 Chrome에서 해당 서비스에 로그인하세요.` };
+  if (raw.includes("ABORTED")) return { status: "PAUSED", detail: "사용자가 중단했습니다." };
+  if (raw.includes("PROMPT_TOO_LONG")) {
+    return {
+      status: "ERROR",
+      detail: `${SERVICE_LABELS[service]}가 입력 길이/토큰 한도 때문에 답변하지 못했습니다. 설정에서 최대 컨텍스트 메시지 수 또는 글자 수를 줄인 뒤 다시 시도하세요.`,
+    };
+  }
   if (raw.includes("INPUT_NOT_FOUND")) return { status: "ERROR", detail: `${SERVICE_LABELS[service]} 입력창을 찾지 못했습니다. 서비스 화면을 새로고침하거나 선택자를 업데이트하세요.` };
   if (raw.includes("RESPONSE_TIMEOUT")) return { status: "ERROR", detail: `${SERVICE_LABELS[service]}의 답변 시간이 초과되었습니다.` };
   return { status: "ERROR", detail: raw };
@@ -385,8 +399,23 @@ async function exportRoom(format) {
 
 async function abort() {
   abortRequested = true;
+  const room = await getRoom();
+  for (const message of room.messages) {
+    if ((message.status === "SENDING" || message.status === "STREAMING") && SERVICES.includes(message.speaker)) {
+      message.status = "FAILED";
+      message.errorMessage = "사용자가 중단했습니다.";
+      emit({ type: "MESSAGE_ADDED", message });
+      emit({ type: "SERVICE_STATUS_CHANGED", service: message.speaker, status: "PAUSED" });
+    }
+  }
+  await saveRoom(room);
   for (const service of SERVICES) {
-    await sendToService(service, { type: "STOP" }).catch(() => {});
+    const tabs = await chrome.tabs.query({ url: SERVICE_URL_PATTERNS[service] });
+    for (const tab of tabs) {
+      if (tab.id) {
+        await chrome.tabs.sendMessage(tab.id, { type: "STOP", targetService: service }).catch(() => {});
+      }
+    }
   }
   busy = false;
   emit({ type: "ABORTED" });
@@ -410,9 +439,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       } else if (message.type === "CHECK_LOGIN") {
         sendResponse({ ok: true, health: await health() });
       } else if (message.type === "OPEN_TAB") {
-        const tabId = await ensureTab(message.service);
-        await chrome.tabs.update(tabId, { active: true });
+        await openServiceForLogin(message.service);
         sendResponse({ ok: true });
+      } else if (message.type === "OPEN_LOGIN_REQUIRED") {
+        const statuses = await health();
+        const needLogin = statuses.filter((item) => !item.loggedIn);
+        for (const item of needLogin) await openServiceForLogin(item.service).catch(() => {});
+        sendResponse({ ok: true, opened: needLogin.map((item) => item.service), health: statuses });
       } else if (message.type === "RETRY") {
         retryService(message.service).catch((error) => progress(`재시도 실패: ${error.message || String(error)}`));
         sendResponse({ ok: true });

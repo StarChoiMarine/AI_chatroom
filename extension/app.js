@@ -110,11 +110,11 @@ function buildErrorActions(message) {
   retry.textContent = `${SERVICE_LABELS[message.speaker]} 다시 시도`;
   retry.onclick = () => command("RETRY", { service: message.speaker });
   const reLogin = document.createElement("button");
-  reLogin.textContent = "로그인 상태 확인";
-  reLogin.onclick = () => checkLogin();
+  reLogin.textContent = "로그인하러 가기";
+  reLogin.onclick = () => openServiceTab(message.speaker);
   const openTab = document.createElement("button");
   openTab.textContent = "탭 열기";
-  openTab.onclick = () => command("OPEN_TAB", { service: message.speaker });
+  openTab.onclick = () => openServiceTab(message.speaker);
   div.append(retry, reLogin, openTab);
   return div;
 }
@@ -205,7 +205,31 @@ async function sendMessage() {
 async function checkLogin() {
   addProgress("로그인 상태 확인 중...");
   const response = await command("CHECK_LOGIN");
-  if (response?.ok) applyHealth(response.health);
+  if (response?.ok) {
+    applyHealth(response.health);
+    const needLogin = (response.health || []).filter((item) => !item.loggedIn).map((item) => SERVICE_LABELS[item.service]);
+    if (needLogin.length) addProgress(`로그인 필요: ${needLogin.join(", ")}. '로그인 필요한 탭 열기'를 누르세요.`);
+    else addProgress("모든 서비스가 로그인되어 있습니다.");
+  }
+}
+
+async function openServiceTab(service) {
+  await command("OPEN_TAB", { service });
+  addProgress(`${SERVICE_LABELS[service]} 탭을 열었습니다. 로그인 후 '로그인 상태 확인'을 누르세요.`);
+}
+
+async function openLoginRequiredTabs() {
+  const response = await command("OPEN_LOGIN_REQUIRED");
+  if (!response?.ok) {
+    addProgress(`로그인 탭 열기 실패: ${response?.error || "unknown"}`);
+    return;
+  }
+  applyHealth(response.health);
+  if (response.opened?.length) {
+    addProgress(`로그인 필요한 탭을 열었습니다: ${response.opened.map((service) => SERVICE_LABELS[service]).join(", ")}`);
+  } else {
+    addProgress("로그인이 필요한 서비스가 없습니다.");
+  }
 }
 
 function renderSettings() {
@@ -325,6 +349,11 @@ $("#input").addEventListener("input", (event) => {
 });
 $("#btnAbort").onclick = () => command("ABORT");
 $("#btnCheckLogin").onclick = checkLogin;
+$("#btnOpenLogin").onclick = openLoginRequiredTabs;
+document.querySelectorAll('#participants li[data-service]:not([data-service="USER"])').forEach((item) => {
+  item.title = "클릭하면 해당 서비스 탭을 엽니다.";
+  item.addEventListener("click", () => openServiceTab(item.dataset.service));
+});
 $("#btnNewChat").onclick = () => $("#newChatModal").classList.remove("hidden");
 $("#btnNewCancel").onclick = () => $("#newChatModal").classList.add("hidden");
 $("#btnNewLocal").onclick = async () => {
