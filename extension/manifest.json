@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "AI Roundtable",
+  "version": "0.1.0",
+  "description": "Use ChatGPT, Claude, and Gemini side by side with your logged-in browser sessions.",
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://claude.ai/*",
+    "https://gemini.google.com/*"
+  ],
+  "action": {
+    "default_title": "AI Roundtable"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+      ],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["app.html", "app.js", "style.css"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
