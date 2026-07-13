@@ -97,11 +97,19 @@
       loggedInIndicators: [
         'div.ql-editor[contenteditable="true"]',
         'rich-textarea div[contenteditable="true"]',
+        'rich-textarea [contenteditable="true"]',
+        'rich-textarea',
+        'bard-sidenav',
+        'side-navigation',
+        'button[aria-label*="New chat"]',
+        'button[aria-label*="새 채팅"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="보내기"]',
         'div[contenteditable="true"]',
       ],
       loginRequiredIndicators: [
         'a[href*="accounts.google.com"]',
-        "text=/Sign in|로그인/i",
+        "text=/^Sign in$|^로그인$/i",
       ],
       input: [
         'div.ql-editor[contenteditable="true"]',
@@ -216,8 +224,8 @@
 
   async function checkLogin() {
     const selectors = SELECTORS[service];
-    if (await anyVisible(selectors.loginRequiredIndicators, 500)) return false;
-    return anyVisible(selectors.loggedInIndicators, 1200);
+    if (await anyVisible(selectors.loggedInIndicators, 1200)) return true;
+    return !(await anyVisible(selectors.loginRequiredIndicators, 500));
   }
 
   function throwIfAborted() {
