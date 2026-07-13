@@ -63,9 +63,9 @@ const DEFAULT_SETTINGS = {
   },
   avatars: {
     USER: "",
-    CHATGPT: "",
-    CLAUDE: "",
-    GEMINI: "",
+    CHATGPT: "assets/chatgpt.jpg",
+    CLAUDE: "assets/claude.jpg",
+    GEMINI: "assets/gemini.jpg",
   },
   roles: DEFAULT_ROLES,
   maxContextMessages: 12,
@@ -142,9 +142,17 @@ function normalizeSettings(settings = {}) {
     ...settings,
     services: { ...structuredClone(DEFAULT_SETTINGS.services), ...(settings.services || {}) },
     personas: { ...structuredClone(DEFAULT_SETTINGS.personas), ...(settings.personas || {}) },
-    avatars: { ...structuredClone(DEFAULT_SETTINGS.avatars), ...(settings.avatars || {}) },
+    avatars: mergeAvatarDefaults(settings.avatars || {}),
     roles: { ...structuredClone(DEFAULT_SETTINGS.roles), ...(settings.roles || {}) },
   };
+}
+
+function mergeAvatarDefaults(avatars) {
+  const defaults = structuredClone(DEFAULT_SETTINGS.avatars);
+  for (const [key, value] of Object.entries(avatars)) {
+    defaults[key] = value || defaults[key] || "";
+  }
+  return defaults;
 }
 
 async function saveRoom(room) {

@@ -13,6 +13,9 @@ test-results/
 logs/
 screenshots/
 
+# 로컬 확장프로그램 프로필 이미지(개인 이미지)
+extension/assets/
+
 # 환경 변수
 .env
 .env.*

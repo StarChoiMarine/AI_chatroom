@@ -67,6 +67,9 @@ function renderMessage(message) {
     const img = document.createElement("img");
     img.src = avatarUrl;
     img.alt = message.speaker === "USER" ? state.userName : (SERVICE_LABELS[message.speaker] || message.speaker);
+    img.onerror = () => {
+      avatar.textContent = message.speaker === "USER" ? "나" : (SERVICE_LABELS[message.speaker] || "S")[0];
+    };
     avatar.appendChild(img);
   } else {
     avatar.textContent = message.speaker === "USER" ? "나" : (SERVICE_LABELS[message.speaker] || "S")[0];
