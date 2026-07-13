@@ -392,12 +392,15 @@ async function runService(room, service, round) {
     const isInitialDelivery = cursor <= 0;
     progress(`${SERVICE_LABELS[service]}에 ${isInitialDelivery ? "초기 맥락" : "새로 추가된 대화"}를 전달하고 있습니다.`);
     const prompt = buildPrompt(service, room);
-    const response = await sendToService(service, {
+    const responsePromise = sendToService(service, {
       type: "SEND_AND_WAIT",
       prompt,
       timeoutMs: room.settings.responseTimeoutMs,
       stabilizeMs: room.settings.stabilizeMs,
     });
+    emit({ type: "SERVICE_STATUS_CHANGED", service, status: "GENERATING" });
+    progress(`${SERVICE_LABELS[service]}의 답변을 기다리고 있습니다.`);
+    const response = await responsePromise;
     if (abortRequested) throw new Error("ABORTED");
     if (!response?.ok) throw new Error(response?.error || "응답 수집 실패");
     aiMsg.content = response.text;

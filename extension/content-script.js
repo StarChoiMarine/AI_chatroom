@@ -79,8 +79,14 @@
       ],
       assistantMessage: [
         'div[data-testid="assistant-message"]',
+        '[data-testid="conversation-turn"] div[data-is-streaming="false"]',
+        '[data-testid="conversation-turn"] div[class*="font-claude"]',
         "div.font-claude-message",
         "div.font-claude-response",
+        'div[class*="font-claude-message"]',
+        'div[class*="claude-response"]',
+        'article div[class*="prose"]',
+        'article div[class*="markdown"]',
       ],
       newChat: [
         'a[href="/new"]',
@@ -120,6 +126,8 @@
         "div.model-response-text",
         "model-response .markdown",
         "message-content",
+        "model-response",
+        ".conversation-container model-response",
       ],
       newChat: [
         'button[aria-label*="New chat"]',
@@ -295,6 +303,8 @@
       const items = query(selector);
       if (items.length) return items.length;
     }
+    const fallback = fallbackAssistantCandidates();
+    if (fallback.length) return fallback.length;
     return 0;
   }
 
@@ -307,7 +317,35 @@
         if (text) return text;
       }
     }
+    const fallback = fallbackAssistantCandidates();
+    if (fallback.length) {
+      return fallback[fallback.length - 1].text;
+    }
     return "";
+  }
+
+  function fallbackAssistantCandidates() {
+    const input = query(SELECTORS[service].input[0])[0] || document.activeElement;
+    const inputRect = input?.getBoundingClientRect?.();
+    const minTop = inputRect ? Math.max(0, inputRect.top - window.innerHeight * 2) : 0;
+    const candidates = [...document.querySelectorAll("main article, main [data-testid], main .prose, main .markdown, main p, main div")]
+      .filter((el) => isVisible(el))
+      .map((el) => ({ el, rect: el.getBoundingClientRect(), text: (el.innerText || el.textContent || "").trim() }))
+      .filter((item) => {
+        if (!item.text || item.text.length < 20) return false;
+        if (inputRect && item.rect.top > inputRect.top) return false;
+        if (item.rect.top < minTop) return false;
+        if (item.el.matches("button, textarea, input, [contenteditable='true']")) return false;
+        if (item.el.closest("button, textarea, input, [contenteditable='true']")) return false;
+        return !ERROR_PATTERNS.some((pattern) => pattern.test(item.text));
+      });
+
+    const byText = new Map();
+    for (const item of candidates) {
+      const prev = byText.get(item.text);
+      if (!prev || item.text.length > prev.text.length) byText.set(item.text, item);
+    }
+    return [...byText.values()].sort((a, b) => a.rect.top - b.rect.top);
   }
 
   async function isGenerating() {
