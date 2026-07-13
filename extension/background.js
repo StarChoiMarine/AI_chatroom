@@ -56,6 +56,17 @@ const DEFAULT_SETTINGS = {
     CLAUDE: { enabled: true, url: SERVICE_URLS.CLAUDE },
     GEMINI: { enabled: true, url: SERVICE_URLS.GEMINI },
   },
+  personas: {
+    CHATGPT: "",
+    CLAUDE: "",
+    GEMINI: "",
+  },
+  avatars: {
+    USER: "",
+    CHATGPT: "",
+    CLAUDE: "",
+    GEMINI: "",
+  },
   roles: DEFAULT_ROLES,
   maxContextMessages: 12,
   maxContextChars: 24000,
@@ -117,11 +128,23 @@ async function getRoom() {
   const data = await storageGet(["room"]);
   if (data.room) {
     data.room.deliveryCursors ||= Object.fromEntries(SERVICES.map((service) => [service, 0]));
+    data.room.settings = normalizeSettings(data.room.settings);
     return data.room;
   }
   const room = createRoom();
   await storageSet({ room });
   return room;
+}
+
+function normalizeSettings(settings = {}) {
+  return {
+    ...structuredClone(DEFAULT_SETTINGS),
+    ...settings,
+    services: { ...structuredClone(DEFAULT_SETTINGS.services), ...(settings.services || {}) },
+    personas: { ...structuredClone(DEFAULT_SETTINGS.personas), ...(settings.personas || {}) },
+    avatars: { ...structuredClone(DEFAULT_SETTINGS.avatars), ...(settings.avatars || {}) },
+    roles: { ...structuredClone(DEFAULT_SETTINGS.roles), ...(settings.roles || {}) },
+  };
 }
 
 async function saveRoom(room) {
@@ -144,6 +167,17 @@ function speakerLabel(speaker, userName) {
 
 function roleKey(service) {
   return { CHATGPT: "chatgpt", CLAUDE: "claude", GEMINI: "gemini" }[service];
+}
+
+function personaBlock(target, settings) {
+  const persona = settings.personas?.[target]?.trim();
+  if (!persona) return "";
+  return [
+    `[${SERVICE_LABELS[target]}의 말투/컨셉]`,
+    persona,
+    "위 컨셉은 말투와 태도에 반영하되, 답변의 정확성과 대화 규칙을 해치지 마세요.",
+    "",
+  ].join("\n");
 }
 
 function usableMessages(messages) {
@@ -181,6 +215,7 @@ function buildInitialPrompt(target, messages, settings) {
     `[${targetLabel}의 역할]`,
     settings.roles[roleKey(target)],
     "",
+    personaBlock(target, settings),
   ].join("\n");
 
   const usable = usableMessages(messages);
@@ -220,6 +255,8 @@ function buildDeltaPrompt(target, messages, settings, cursor) {
     const parts = [
       `[새로 추가된 대화]`,
       `${targetLabel}의 기존 채팅방에는 이전 맥락이 이미 있습니다. 아래 새 발언만 반영해서 자연스럽게 이어서 답하세요.`,
+      "",
+      personaBlock(target, settings),
       "",
     ];
     if (truncated) {
@@ -428,12 +465,14 @@ async function newChat(resetWeb) {
 
 async function updateSettings(patch) {
   const room = await getRoom();
-  room.settings = {
+  room.settings = normalizeSettings({
     ...room.settings,
     ...patch,
     services: patch.services || room.settings.services,
+    personas: patch.personas || room.settings.personas,
+    avatars: patch.avatars || room.settings.avatars,
     roles: patch.roles || room.settings.roles,
-  };
+  });
   room.title = room.settings.roomTitle;
   room.mode = room.settings.defaultMode;
   await saveRoom(room);

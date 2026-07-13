@@ -62,7 +62,15 @@ function renderMessage(message) {
 
   const avatar = document.createElement("div");
   avatar.className = "avatar";
-  avatar.textContent = message.speaker === "USER" ? "나" : (SERVICE_LABELS[message.speaker] || "S")[0];
+  const avatarUrl = state.settings?.avatars?.[message.speaker] || "";
+  if (avatarUrl) {
+    const img = document.createElement("img");
+    img.src = avatarUrl;
+    img.alt = message.speaker === "USER" ? state.userName : (SERVICE_LABELS[message.speaker] || message.speaker);
+    avatar.appendChild(img);
+  } else {
+    avatar.textContent = message.speaker === "USER" ? "나" : (SERVICE_LABELS[message.speaker] || "S")[0];
+  }
 
   const bubble = document.createElement("div");
   bubble.className = `bubble ${message.speaker}`;
@@ -234,6 +242,8 @@ async function openLoginRequiredTabs() {
 
 function renderSettings() {
   const s = state.settings;
+  s.personas ||= { CHATGPT: "", CLAUDE: "", GEMINI: "" };
+  s.avatars ||= { USER: "", CHATGPT: "", CLAUDE: "", GEMINI: "" };
   const body = $("#settingsBody");
   const svc = (id, label) => `
     <div class="field inline">
@@ -261,6 +271,17 @@ function renderSettings() {
       <div><label>답변 사이 대기(ms)</label><input type="number" id="delayBetweenMs" value="${s.delayBetweenMs}"/></div>
     </div>
     <div class="section-title">역할 프롬프트</div>
+    <div class="field inline">
+      <div><label>사용자 프로필 이미지 URL</label><input type="text" id="avatar_USER" placeholder="https://... 또는 data:image/..." value="${escapeAttr(s.avatars.USER || "")}"/></div>
+      <div><label>ChatGPT 프로필 이미지 URL</label><input type="text" id="avatar_CHATGPT" placeholder="나중에 추가" value="${escapeAttr(s.avatars.CHATGPT || "")}"/></div>
+    </div>
+    <div class="field inline">
+      <div><label>Claude 프로필 이미지 URL</label><input type="text" id="avatar_CLAUDE" placeholder="나중에 추가" value="${escapeAttr(s.avatars.CLAUDE || "")}"/></div>
+      <div><label>Gemini 프로필 이미지 URL</label><input type="text" id="avatar_GEMINI" placeholder="나중에 추가" value="${escapeAttr(s.avatars.GEMINI || "")}"/></div>
+    </div>
+    <div class="field"><label>ChatGPT 컨셉/말투</label><input type="text" id="persona_CHATGPT" placeholder="예: 엄격하지만 챙겨주는 형처럼 말해" value="${escapeAttr(s.personas.CHATGPT || "")}"/></div>
+    <div class="field"><label>Claude 컨셉/말투</label><input type="text" id="persona_CLAUDE" placeholder="예: 냉철한 선배 컨설턴트처럼 말해" value="${escapeAttr(s.personas.CLAUDE || "")}"/></div>
+    <div class="field"><label>Gemini 컨셉/말투</label><input type="text" id="persona_GEMINI" placeholder="예: 귀여운 여동생처럼 밝게 정리해" value="${escapeAttr(s.personas.GEMINI || "")}"/></div>
     <div class="field"><label>공통 대화 규칙</label><textarea id="role_common">${escapeHtml(s.roles.commonRules)}</textarea></div>
     <div class="field"><label>ChatGPT 역할</label><textarea id="role_chatgpt">${escapeHtml(s.roles.chatgpt)}</textarea></div>
     <div class="field"><label>Claude 역할</label><textarea id="role_claude">${escapeHtml(s.roles.claude)}</textarea></div>
@@ -298,6 +319,17 @@ async function saveSettings() {
       CHATGPT: { enabled: $("#en_CHATGPT").checked, url: $("#url_CHATGPT").value },
       CLAUDE: { enabled: $("#en_CLAUDE").checked, url: $("#url_CLAUDE").value },
       GEMINI: { enabled: $("#en_GEMINI").checked, url: $("#url_GEMINI").value },
+    },
+    personas: {
+      CHATGPT: $("#persona_CHATGPT").value,
+      CLAUDE: $("#persona_CLAUDE").value,
+      GEMINI: $("#persona_GEMINI").value,
+    },
+    avatars: {
+      USER: $("#avatar_USER").value.trim(),
+      CHATGPT: $("#avatar_CHATGPT").value.trim(),
+      CLAUDE: $("#avatar_CLAUDE").value.trim(),
+      GEMINI: $("#avatar_GEMINI").value.trim(),
     },
     roles: {
       commonRules: $("#role_common").value,
