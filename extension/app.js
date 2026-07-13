@@ -1,5 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 const SERVICE_LABELS = { CHATGPT: "ChatGPT", CLAUDE: "Claude", GEMINI: "Gemini", USER: "사용자", SYSTEM: "시스템" };
+const SERVICES = ["CHATGPT", "CLAUDE", "GEMINI"];
 const STATUS_TEXT = {
   READY: "준비됨",
   LOGIN_REQUIRED: "로그인 필요",
@@ -103,15 +104,50 @@ function renderMessage(message) {
     error.textContent = message.errorMessage || "오류가 발생했습니다.";
     body.appendChild(error);
     body.appendChild(buildErrorActions(message));
-  } else if (!message.content && message.status === "SENDING") {
+  } else if (!message.content && (message.status === "SENDING" || message.status === "STREAMING")) {
     body.innerHTML = '<span class="typing"><span></span><span></span><span></span></span>';
   } else {
     body.textContent = message.content || "";
   }
   bubble.appendChild(body);
+  const receipts = renderReadReceipts(message);
+  if (receipts) bubble.appendChild(receipts);
   wrap.appendChild(avatar);
   wrap.appendChild(bubble);
   return wrap;
+}
+
+function renderReadReceipts(message) {
+  const readBy = message.readBy || {};
+  const readers = SERVICES.filter((service) => service !== message.speaker && readBy[service]);
+  if (!readers.length) return null;
+  const row = document.createElement("div");
+  row.className = "read-receipts";
+  const label = document.createElement("span");
+  label.className = "read-label";
+  label.textContent = "읽음";
+  row.appendChild(label);
+  for (const service of readers) row.appendChild(renderMiniAvatar(service));
+  return row;
+}
+
+function renderMiniAvatar(service) {
+  const avatar = document.createElement("span");
+  avatar.className = `mini-avatar ${service}`;
+  avatar.title = `${SERVICE_LABELS[service]} 읽음`;
+  const avatarUrl = state.settings?.avatars?.[service] || "";
+  if (avatarUrl) {
+    const img = document.createElement("img");
+    img.src = avatarUrl;
+    img.alt = SERVICE_LABELS[service];
+    img.onerror = () => {
+      avatar.textContent = SERVICE_LABELS[service][0];
+    };
+    avatar.appendChild(img);
+  } else {
+    avatar.textContent = SERVICE_LABELS[service][0];
+  }
+  return avatar;
 }
 
 function buildErrorActions(message) {
@@ -184,10 +220,15 @@ chrome.runtime.onMessage.addListener((message) => {
   else if (ev.type === "RESPONSE_COMPLETED") {
     upsertMessage(ev.message);
     patchMessage(ev.message);
+  } else if (ev.type === "READ_RECEIPTS_CHANGED") {
+    (ev.messages || []).forEach((item) => {
+      upsertMessage(item);
+      patchMessage(item);
+    });
   } else if (ev.type === "ROUND_COMPLETED") {
     state.busy = false;
     updateSendState();
-    addProgress(`라운드 ${ev.round} 완료.`);
+    addProgress(ev.exhausted ? `라운드 ${ev.round} 일시 정지. 연쇄 답변 ${ev.responseCount}개 도달.` : `라운드 ${ev.round} 완료.`);
   } else if (ev.type === "ABORTED") {
     state.busy = false;
     updateSendState();
@@ -277,6 +318,10 @@ function renderSettings() {
       <div><label>안정화 시간(ms)</label><input type="number" id="stabilizeMs" value="${s.stabilizeMs}"/></div>
       <div><label>답변 사이 대기(ms)</label><input type="number" id="delayBetweenMs" value="${s.delayBetweenMs}"/></div>
     </div>
+    <div class="field inline">
+      <div><label>자동 연쇄 답변 최대 개수</label><input type="number" id="maxCascadeResponses" min="1" max="30" value="${s.maxCascadeResponses || 9}"/></div>
+      <div></div>
+    </div>
     <div class="section-title">역할 프롬프트</div>
     <div class="field inline">
       <div><label>사용자 프로필 이미지 URL</label><input type="text" id="avatar_USER" placeholder="https://... 또는 data:image/..." value="${escapeAttr(s.avatars.USER || "")}"/></div>
@@ -321,6 +366,7 @@ async function saveSettings() {
     responseTimeoutMs: num("responseTimeoutMs", s.responseTimeoutMs),
     stabilizeMs: num("stabilizeMs", s.stabilizeMs),
     delayBetweenMs: num("delayBetweenMs", s.delayBetweenMs),
+    maxCascadeResponses: num("maxCascadeResponses", s.maxCascadeResponses || 9),
     autoSave: $("#autoSave").checked,
     services: {
       CHATGPT: { enabled: $("#en_CHATGPT").checked, url: $("#url_CHATGPT").value },

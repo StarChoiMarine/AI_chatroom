@@ -73,6 +73,7 @@ const DEFAULT_SETTINGS = {
   responseTimeoutMs: 180000,
   stabilizeMs: 3000,
   delayBetweenMs: 1200,
+  maxCascadeResponses: 9,
   allowSendWhileGenerating: false,
   autoSave: true,
 };
@@ -195,6 +196,28 @@ function personaBlock(target, settings) {
 
 function usableMessages(messages) {
   return messages.filter((m) => m.speaker !== "SYSTEM" && (m.status === "COMPLETED" || m.speaker === "USER"));
+}
+
+function unreadMessagesFor(room, service) {
+  const cursor = Number(room.deliveryCursors?.[service] || 0);
+  return usableMessages(room.messages.slice(cursor)).filter((message) => message.speaker !== service);
+}
+
+function hasUnreadFor(room, service) {
+  return unreadMessagesFor(room, service).length > 0;
+}
+
+function markReadBy(room, service) {
+  const readAt = now();
+  const changed = [];
+  for (const message of unreadMessagesFor(room, service)) {
+    message.readBy ||= {};
+    if (!message.readBy[service]) {
+      message.readBy[service] = readAt;
+      changed.push(message);
+    }
+  }
+  if (changed.length) emit({ type: "READ_RECEIPTS_CHANGED", service, messages: changed });
 }
 
 function renderMessageBlock(message, settings) {
@@ -391,14 +414,29 @@ async function handleUserMessage(text) {
     emit({ type: "MESSAGE_ADDED", message: userMsg });
     await saveRoom(room);
 
-    const targets = resolveTargets(text, room.settings);
-    for (const service of targets) {
+    const enabled = room.settings.speakingOrder.filter((service) => room.settings.services[service]?.enabled);
+    const queue = [...resolveTargets(text, room.settings)];
+    const maxCascadeResponses = Math.max(1, Number(room.settings.maxCascadeResponses || DEFAULT_SETTINGS.maxCascadeResponses));
+    let responseCount = 0;
+    let exhausted = false;
+
+    while (queue.length && responseCount < maxCascadeResponses) {
       if (abortRequested) break;
-      await runService(room, service, round);
+      const service = queue.shift();
+      if (!room.settings.services[service]?.enabled || !hasUnreadFor(room, service)) continue;
+      const completed = await runService(room, service, round);
+      if (completed) {
+        responseCount += 1;
+        for (const next of enabled) {
+          if (next !== service && hasUnreadFor(room, next) && !queue.includes(next)) queue.push(next);
+        }
+      }
       if (abortRequested) break;
       await sleep(room.settings.delayBetweenMs);
     }
-    emit({ type: "ROUND_COMPLETED", round });
+    exhausted = queue.length > 0 && responseCount >= maxCascadeResponses;
+    emit({ type: "ROUND_COMPLETED", round, exhausted, responseCount });
+    if (exhausted) progress(`연쇄 답변이 ${maxCascadeResponses}개에 도달해서 자동으로 멈췄습니다.`);
   } finally {
     busy = false;
     await saveRoom(room);
@@ -423,12 +461,16 @@ async function runService(room, service, round) {
     const isInitialDelivery = cursor <= 0;
     progress(`${SERVICE_LABELS[service]}에 ${isInitialDelivery ? "초기 맥락" : "새로 추가된 대화"}를 전달하고 있습니다.`);
     const prompt = buildPrompt(service, room);
+    markReadBy(room, service);
+    await saveRoom(room);
     const responsePromise = sendToService(service, {
       type: "SEND_AND_WAIT",
       prompt,
       timeoutMs: room.settings.responseTimeoutMs,
       stabilizeMs: room.settings.stabilizeMs,
     });
+    aiMsg.status = "STREAMING";
+    emit({ type: "MESSAGE_ADDED", message: aiMsg });
     emit({ type: "SERVICE_STATUS_CHANGED", service, status: "GENERATING" });
     progress(`${SERVICE_LABELS[service]}의 답변을 기다리고 있습니다.`);
     const response = await responsePromise;
@@ -442,6 +484,7 @@ async function runService(room, service, round) {
     emit({ type: "RESPONSE_COMPLETED", service, message: aiMsg });
     progress(`${SERVICE_LABELS[service]} 답변을 수집했습니다. (${response.text.length}자)`);
     await saveRoom(room);
+    return true;
   } catch (error) {
     const message = classifyError(service, error);
     aiMsg.status = "FAILED";
@@ -450,6 +493,7 @@ async function runService(room, service, round) {
     emit({ type: "RESPONSE_FAILED", service, error: message.detail });
     emit({ type: "MESSAGE_ADDED", message: aiMsg });
     await saveRoom(room);
+    return false;
   }
 }
 
