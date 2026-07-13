@@ -108,13 +108,17 @@ function createRoom(settings = structuredClone(DEFAULT_SETTINGS)) {
     updatedAt: createdAt,
     mode: settings.defaultMode,
     settings,
+    deliveryCursors: Object.fromEntries(SERVICES.map((service) => [service, 0])),
     messages: [],
   };
 }
 
 async function getRoom() {
   const data = await storageGet(["room"]);
-  if (data.room) return data.room;
+  if (data.room) {
+    data.room.deliveryCursors ||= Object.fromEntries(SERVICES.map((service) => [service, 0]));
+    return data.room;
+  }
   const room = createRoom();
   await storageSet({ room });
   return room;
@@ -142,7 +146,25 @@ function roleKey(service) {
   return { CHATGPT: "chatgpt", CLAUDE: "claude", GEMINI: "gemini" }[service];
 }
 
-function buildPrompt(target, messages, settings) {
+function usableMessages(messages) {
+  return messages.filter((m) => m.speaker !== "SYSTEM" && (m.status === "COMPLETED" || m.speaker === "USER"));
+}
+
+function renderMessageBlock(message, settings) {
+  return `${speakerLabel(message.speaker, settings.userName)}:\n${message.content}`;
+}
+
+function trimMessagesToFit(messages, settings, assemble) {
+  let list = [...messages];
+  let prompt = assemble(list, list.length < messages.length);
+  while (prompt.length > settings.maxContextChars && list.length > 1) {
+    list = list.slice(1);
+    prompt = assemble(list, true);
+  }
+  return prompt;
+}
+
+function buildInitialPrompt(target, messages, settings) {
   const targetLabel = SERVICE_LABELS[target];
   const header = [
     `당신은 사용자, ChatGPT, Claude, Gemini가 참여하는 공용 대화방에`,
@@ -161,20 +183,19 @@ function buildPrompt(target, messages, settings) {
     "",
   ].join("\n");
 
-  const usable = messages.filter((m) => m.speaker !== "SYSTEM" && (m.status === "COMPLETED" || m.speaker === "USER"));
+  const usable = usableMessages(messages);
   const firstUser = usable.find((m) => m.speaker === "USER");
   let recent = usable.slice(-settings.maxContextMessages);
-  const renderBlock = (m) => `${speakerLabel(m.speaker, settings.userName)}:\n${m.content}`;
 
   function assemble(list, includeTopic, truncated) {
     const parts = [header];
     if (includeTopic && firstUser && !list.includes(firstUser)) {
-      parts.push("[대화 주제]", renderBlock(firstUser), "");
+      parts.push("[대화 주제]", renderMessageBlock(firstUser, settings), "");
     }
     if (truncated) {
       parts.push("[안내] 이 대화는 오래 진행되어 일부 초기 발언이 생략되었습니다.", "");
     }
-    parts.push("[지금까지의 대화]", "", list.map(renderBlock).join("\n\n"), "", `이제 ${targetLabel}의 입장에서 자연스럽게 대화에 참여하세요.`);
+    parts.push("[지금까지의 대화]", "", list.map((m) => renderMessageBlock(m, settings)).join("\n\n"), "", `이제 ${targetLabel}의 입장에서 자연스럽게 대화에 참여하세요.`);
     return parts.join("\n");
   }
 
@@ -186,6 +207,34 @@ function buildPrompt(target, messages, settings) {
     prompt = assemble(recent, firstUser && !recent.includes(firstUser), truncated);
   }
   return prompt;
+}
+
+function buildDeltaPrompt(target, messages, settings, cursor) {
+  const targetLabel = SERVICE_LABELS[target];
+  const delta = usableMessages(messages.slice(cursor));
+  if (delta.length === 0) {
+    return `새로 전달할 발언은 없습니다. ${targetLabel}의 입장에서 짧게 이어서 말하세요.`;
+  }
+
+  return trimMessagesToFit(delta, settings, (list, truncated) => {
+    const parts = [
+      `[새로 추가된 대화]`,
+      `${targetLabel}의 기존 채팅방에는 이전 맥락이 이미 있습니다. 아래 새 발언만 반영해서 자연스럽게 이어서 답하세요.`,
+      "",
+    ];
+    if (truncated) {
+      parts.push("[안내] 새 발언도 길어서 일부 앞부분이 생략되었습니다.", "");
+    }
+    parts.push(list.map((m) => renderMessageBlock(m, settings)).join("\n\n"));
+    parts.push("", `이제 ${targetLabel}의 입장에서 대화에 참여하세요.`);
+    return parts.join("\n");
+  });
+}
+
+function buildPrompt(target, room) {
+  const cursor = Number(room.deliveryCursors?.[target] || 0);
+  if (cursor <= 0) return buildInitialPrompt(target, room.messages, room.settings);
+  return buildDeltaPrompt(target, room.messages, room.settings, cursor);
 }
 
 function resolveTargets(text, settings) {
@@ -302,8 +351,10 @@ async function runService(room, service, round) {
   emit({ type: "MESSAGE_ADDED", message: aiMsg });
   try {
     emit({ type: "SERVICE_STATUS_CHANGED", service, status: "SENDING" });
-    progress(`${SERVICE_LABELS[service]}에 현재까지의 대화를 전달하고 있습니다.`);
-    const prompt = buildPrompt(service, room.messages, room.settings);
+    const cursor = Number(room.deliveryCursors?.[service] || 0);
+    const isInitialDelivery = cursor <= 0;
+    progress(`${SERVICE_LABELS[service]}에 ${isInitialDelivery ? "초기 맥락" : "새로 추가된 대화"}를 전달하고 있습니다.`);
+    const prompt = buildPrompt(service, room);
     const response = await sendToService(service, {
       type: "SEND_AND_WAIT",
       prompt,
@@ -314,6 +365,8 @@ async function runService(room, service, round) {
     if (!response?.ok) throw new Error(response?.error || "응답 수집 실패");
     aiMsg.content = response.text;
     aiMsg.status = "COMPLETED";
+    room.deliveryCursors ||= Object.fromEntries(SERVICES.map((name) => [name, 0]));
+    room.deliveryCursors[service] = room.messages.length;
     emit({ type: "SERVICE_STATUS_CHANGED", service, status: "DONE" });
     emit({ type: "RESPONSE_COMPLETED", service, message: aiMsg });
     progress(`${SERVICE_LABELS[service]} 답변을 수집했습니다. (${response.text.length}자)`);
