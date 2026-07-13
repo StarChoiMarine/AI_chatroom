@@ -77,6 +77,11 @@ const DEFAULT_SETTINGS = {
   autoSave: true,
 };
 
+const OUTPUT_STYLE_RULES = `[출력 형식]
+- 내부 사고 과정, 분석 제목, 체크리스트 제목, "생각해보는 중" 같은 메타 문구를 출력하지 마세요.
+- "나는 지금 역할을 수행하겠다"처럼 역할 수행을 설명하지 말고, 바로 실제 대화방의 한 참가자처럼 말하세요.
+- 사용자가 형식을 요구하지 않았다면 목록보다 자연스러운 대화체 문장을 우선하세요.`;
+
 let busy = false;
 let abortRequested = false;
 
@@ -220,6 +225,8 @@ function buildInitialPrompt(target, messages, settings) {
     "",
     settings.roles.commonRules,
     "",
+    OUTPUT_STYLE_RULES,
+    "",
     `[${targetLabel}의 역할]`,
     settings.roles[roleKey(target)],
     "",
@@ -263,6 +270,8 @@ function buildDeltaPrompt(target, messages, settings, cursor) {
     const parts = [
       `[새로 추가된 대화]`,
       `${targetLabel}의 기존 채팅방에는 이전 맥락이 이미 있습니다. 아래 새 발언만 반영해서 자연스럽게 이어서 답하세요.`,
+      "",
+      OUTPUT_STYLE_RULES,
       "",
       personaBlock(target, settings),
       "",

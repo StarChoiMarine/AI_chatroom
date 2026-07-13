@@ -1,5 +1,5 @@
 (() => {
-  const CONTENT_VERSION = "2026-07-14-gpt-gemini-stability";
+  const CONTENT_VERSION = "2026-07-14-gemini-response-scope";
   if (window.__AI_ROUNDTABLE_CONTENT__ === CONTENT_VERSION) return;
   window.__AI_ROUNDTABLE_CONTENT__ = CONTENT_VERSION;
 
@@ -155,7 +155,13 @@
       assistantMessage: [
         "message-content.model-response-text",
         "div.model-response-text",
+        "model-response message-content",
         "model-response .markdown",
+        "model-response div[class*='markdown']",
+        "model-response div[class*='response']",
+        "div[class*='model-response-text']",
+        "div[class*='response-container'] message-content",
+        "div[class*='response-container']",
         "message-content",
         "model-response",
         ".conversation-container model-response",
@@ -365,6 +371,7 @@
       const items = query(selector);
       if (items.length) return items.length;
     }
+    if (service === "GEMINI") return 0;
     const fallback = fallbackAssistantCandidates();
     if (fallback.length) return fallback.length;
     return 0;
@@ -379,6 +386,7 @@
         if (text) return text;
       }
     }
+    if (service === "GEMINI") return "";
     const fallback = fallbackAssistantCandidates();
     if (fallback.length) {
       return fallback[fallback.length - 1].text;
@@ -399,6 +407,7 @@
         if (item.rect.top < minTop) return false;
         if (item.el.matches("button, textarea, input, [contenteditable='true']")) return false;
         if (item.el.closest("button, textarea, input, [contenteditable='true']")) return false;
+        if (item.el.closest("nav, aside, [role='navigation'], bard-sidenav, side-navigation, mat-sidenav")) return false;
         return !ERROR_PATTERNS.some((pattern) => pattern.test(item.text));
       });
 
