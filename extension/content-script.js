@@ -1,5 +1,5 @@
 (() => {
-  const CONTENT_VERSION = "2026-07-14-gemini-reconnect";
+  const CONTENT_VERSION = "2026-07-14-gpt-gemini-stability";
   if (window.__AI_ROUNDTABLE_CONTENT__ === CONTENT_VERSION) return;
   window.__AI_ROUNDTABLE_CONTENT__ = CONTENT_VERSION;
 
@@ -41,6 +41,12 @@
         'button[aria-label*="Stop"]',
         'button[aria-label*="중지"]',
       ],
+      continueButton: [
+        'button:has-text("Continue generating")',
+        "text=/^Continue generating$|^계속 생성$/i",
+        'button[aria-label*="Continue"]',
+        'button[aria-label*="계속"]',
+      ],
       assistantMessage: [
         'div[data-message-author-role="assistant"]',
         'div[data-testid^="conversation-turn"] div[data-message-author-role="assistant"]',
@@ -78,6 +84,9 @@
         'button[aria-label*="Stop"]',
         'button[aria-label*="중지"]',
       ],
+      continueButton: [
+        "text=/^Continue$|^계속$/i",
+      ],
       assistantMessage: [
         'div[data-testid="assistant-message"]',
         '[data-testid="conversation-turn"] div[data-is-streaming="false"]',
@@ -114,21 +123,34 @@
       ],
       input: [
         'div.ql-editor[contenteditable="true"]',
+        'rich-textarea .ql-editor[contenteditable="true"]',
         'rich-textarea div[contenteditable="true"]',
+        'rich-textarea [contenteditable="true"]',
+        'div[aria-label*="Enter a prompt"]',
+        'div[aria-label*="프롬프트"]',
+        'div[data-placeholder]',
         'div[contenteditable="true"][role="textbox"]',
         'div[contenteditable="true"]',
         "textarea",
       ],
       sendButton: [
+        'button[aria-label*="Send message"]',
         'button[aria-label*="Send"]',
+        'button[aria-label*="Submit"]',
+        'button[aria-label*="전송"]',
+        'button[aria-label*="메시지 보내기"]',
         'button[aria-label*="보내기"]',
         "button.send-button",
+        "button[send-button]",
         'button[mattooltip*="Send"]',
       ],
       stopButton: [
         'button[aria-label*="Stop"]',
         'button[aria-label*="중지"]',
         "button.stop",
+      ],
+      continueButton: [
+        "text=/^Continue$|^계속$/i",
       ],
       assistantMessage: [
         "message-content.model-response-text",
@@ -200,6 +222,7 @@
       return [...document.querySelectorAll("button,a,input,textarea,div,span")]
         .filter((el) => isVisible(el) && regex.test(el.innerText || el.value || el.textContent || ""));
     }
+    if (selector.includes(":has-text(")) return [];
     try {
       return [...document.querySelectorAll(selector)].filter(isVisible);
     } catch {
@@ -276,13 +299,20 @@
     throwIfAborted();
     input.focus();
     input.click();
+    await sleep(80);
     if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
       setNativeValue(input, message);
       return;
     }
-    input.textContent = "";
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(input);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.execCommand("delete", false);
     document.execCommand("insertText", false, message);
     input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: message }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   async function submit(input) {
@@ -292,7 +322,7 @@
     while (Date.now() < deadline) {
       throwIfAborted();
       throwIfPageError();
-      const button = await findFirst(selectors.sendButton, 300);
+      const button = (await findFirst(selectors.sendButton, 300)) || findLikelySendButton();
       if (button && !button.disabled && button.getAttribute("aria-disabled") !== "true") {
         button.click();
         return;
@@ -303,7 +333,30 @@
     if (sawDisabledSendButton) {
       throw new Error("PROMPT_TOO_LONG:send button stayed disabled");
     }
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+    pressEnter(input);
+  }
+
+  function findLikelySendButton() {
+    const labels = /send|submit|보내기|전송|메시지 보내기/i;
+    return [...document.querySelectorAll("button")]
+      .filter((button) => isVisible(button))
+      .find((button) => {
+        const text = [
+          button.getAttribute("aria-label"),
+          button.getAttribute("title"),
+          button.getAttribute("mattooltip"),
+          button.innerText,
+          button.textContent,
+        ].filter(Boolean).join(" ");
+        return labels.test(text) && !/stop|중지/i.test(text);
+      }) || null;
+  }
+
+  function pressEnter(input) {
+    input.focus();
+    for (const type of ["keydown", "keypress", "keyup"]) {
+      input.dispatchEvent(new KeyboardEvent(type, { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+    }
   }
 
   function countAssistantMessages() {
@@ -361,13 +414,31 @@
     return anyVisible(SELECTORS[service].stopButton, 200);
   }
 
-  async function waitForStableText({ baselineCount, timeoutMs, stabilizeMs }) {
+  async function continueIfAvailable() {
+    const selectors = SELECTORS[service].continueButton || [];
+    const button = await findFirst(selectors, 300);
+    if (!button || button.disabled || button.getAttribute("aria-disabled") === "true") return false;
+    button.click();
+    await sleep(1200);
+    return true;
+  }
+
+  function looksCutOff(text) {
+    const trimmed = text.trim();
+    if (trimmed.length < 80) return false;
+    if (/[.!?。！？…)"'\]\}]$/.test(trimmed)) return false;
+    if (/```[^`]*$/.test(trimmed)) return true;
+    return /[,;:，、]$/.test(trimmed) || /(\b(and|or|but|because|with|for|to|of|in|that|which)|[가-힣](고|며|서|는|를|을|의|에|로|와|과))$/i.test(trimmed);
+  }
+
+  async function waitForStableText({ baselineCount, baselineText, timeoutMs, stabilizeMs }) {
     const startDeadline = Date.now() + Math.min(15000, timeoutMs);
     let started = false;
     while (Date.now() < startDeadline) {
       throwIfAborted();
       throwIfPageError();
-      if (countAssistantMessages() > baselineCount || await isGenerating()) {
+      const latest = readLatestAssistantText();
+      if (countAssistantMessages() > baselineCount || await isGenerating() || (latest && latest !== baselineText)) {
         started = true;
         break;
       }
@@ -391,6 +462,19 @@
         stableSince = Date.now();
       }
       if (lastText && !generating && Date.now() - stableSince >= stabilizeMs) {
+        if (await continueIfAvailable()) {
+          stableSince = Date.now();
+          continue;
+        }
+        if (looksCutOff(lastText)) {
+          await sleep(Math.min(3000, stabilizeMs));
+          const retryText = readLatestAssistantText();
+          if (retryText !== lastText) {
+            lastText = retryText;
+            stableSince = Date.now();
+            continue;
+          }
+        }
         return lastText;
       }
       await sleep(500);
@@ -405,13 +489,14 @@
     }
     const selectors = SELECTORS[service];
     const baselineCount = countAssistantMessages();
+    const baselineText = readLatestAssistantText();
     const input = await findFirst(selectors.input, 2500);
     if (!input) throw new Error("INPUT_NOT_FOUND");
     await typeMessage(input, prompt);
     throwIfPageError();
     await submit(input);
     throwIfPageError();
-    const text = await waitForStableText({ baselineCount, timeoutMs, stabilizeMs });
+    const text = await waitForStableText({ baselineCount, baselineText, timeoutMs, stabilizeMs });
     if (!text) throw new Error("RESPONSE_TIMEOUT");
     return text;
   }
