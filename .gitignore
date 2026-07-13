@@ -1,0 +1,27 @@
+# 자동화 전용 Chrome 프로필 (로그인 세션/쿠키 포함) — 절대 커밋 금지
+browser-profile/
+
+# 대화 데이터
+data/
+
+# Playwright 인증 정보
+playwright/.auth/
+playwright-report/
+test-results/
+
+# 로그 및 디버깅 스크린샷 (대화 내용 포함 가능)
+logs/
+screenshots/
+
+# 환경 변수
+.env
+.env.*
+
+# 의존성 / 빌드 산출물
+node_modules/
+dist/
+coverage/
+
+# OS / 에디터
+.DS_Store
+*.log
