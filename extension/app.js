@@ -118,8 +118,8 @@ function renderMessage(message) {
 }
 
 function renderReadReceipts(message) {
-  const readBy = message.readBy || {};
-  const readers = SERVICES.filter((service) => service !== message.speaker && readBy[service]);
+  const latestByReader = latestReadMessageIds();
+  const readers = SERVICES.filter((service) => latestByReader[service] === message.id);
   if (!readers.length) return null;
   const row = document.createElement("div");
   row.className = "read-receipts";
@@ -129,6 +129,16 @@ function renderReadReceipts(message) {
   row.appendChild(label);
   for (const service of readers) row.appendChild(renderMiniAvatar(service));
   return row;
+}
+
+function latestReadMessageIds() {
+  const latest = {};
+  for (const message of state.messages) {
+    for (const service of SERVICES) {
+      if (message.speaker !== service && message.readBy?.[service]) latest[service] = message.id;
+    }
+  }
+  return latest;
 }
 
 function renderMiniAvatar(service) {
@@ -223,8 +233,8 @@ chrome.runtime.onMessage.addListener((message) => {
   } else if (ev.type === "READ_RECEIPTS_CHANGED") {
     (ev.messages || []).forEach((item) => {
       upsertMessage(item);
-      patchMessage(item);
     });
+    renderAllMessages();
   } else if (ev.type === "ROUND_COMPLETED") {
     state.busy = false;
     updateSendState();
